@@ -1,5 +1,5 @@
 # go-scan
-Escaner rapido de puertos TCP, inspirado en [FastTcpScan](https://s4vitar.github.io/fasttcpscan-go/#) de [@s4vitar](https://github.com/s4vitar)
+Escaner rapido de puertos TCP, inspirado en el [FastTcpScan](https://s4vitar.github.io/fasttcpscan-go/#) de [@s4vitar](https://github.com/s4vitar).
 
 ## Uso
 ```go
