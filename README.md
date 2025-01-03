@@ -28,9 +28,15 @@ Escaner rapido de puertos TCP, inspirado en el [FastTcpScan](https://s4vitar.git
 ## To Do
 Implementar las siguientes funcionalidades
 ```
-  -v	    Mostrar el progreso del escaneo.
-  -udp		Escanear puertos UDP.
-  -csv    Exportar a csv.
+  Opciones nuevas:
+    -v        Mostrar el progreso del escaneo.
+    -udp      Escanear puertos UDP.
+    -csv      Exportar a csv.
+
+  Capacidades nuevas:
+    - Utilizar ping para comprobar conectividad de manera rapida
+    - Interpretear nombres de Host
+    - Realizar consultas DNS
 ```
 
 ## Autor
