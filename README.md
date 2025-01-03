@@ -30,6 +30,7 @@ Implementar las siguientes funcionalidades
 ```
   -v	    Mostrar el progreso del escaneo.
   -udp		Escanear puertos UDP.
+  -csv    Exportar a csv.
 ```
 
 ## Autor
