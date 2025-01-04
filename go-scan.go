@@ -3,7 +3,7 @@ package main
 /*
  Autor: Federico Galarza
  Descripción: Escaner rapido de puertos TCP, inspirado en el FastTcpScan de @s4vitar.
- Repo: https://github.com/fedeScripts
+ Repo: https://github.com/fedeScripts/go-scan
  Version: 1.1
 */
 
@@ -21,6 +21,7 @@ import (
 	"time"
 )
 
+// Flags
 var (
 	hostCli  = flag.String("ip", "127.0.0.1", "Dirección IP o segmento CDIR a escanear separados por coma, ej: 10.1.1.1/24,192.168.0.24")
 	hostFile = flag.String("iL", "", "Archivo con direcciones IP y/o segmentos CDIR. (Uno por línea.)")
@@ -30,6 +31,7 @@ var (
 	output   = flag.String("o", "", "Archivo para guardar el resultado del escaneo")
 )
 
+// Pocesar segmentos de red CDIR
 func expandCIDR(cidr string) ([]string, error) {
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
@@ -43,6 +45,7 @@ func expandCIDR(cidr string) ([]string, error) {
 	return ips, nil
 }
 
+// Auxiliar para expandCIDR
 func incrementIP(ip net.IP) {
 	for j := len(ip) - 1; j >= 0; j-- {
 		ip[j]++
@@ -52,6 +55,7 @@ func incrementIP(ip net.IP) {
 	}
 }
 
+// Parsear las IPs desde -iL
 func parseHostsFromFile(filepath string) ([]string, error) {
 	file, err := os.Open(filepath)
 	if err != nil {
@@ -83,6 +87,7 @@ func parseHostsFromFile(filepath string) ([]string, error) {
 	return hosts, nil
 }
 
+// Parsear las IPs desde -ip
 func parseHostsFromCli(input string) ([]string, error) {
 	parts := strings.Split(input, ",")
 	var hosts []string
@@ -109,6 +114,7 @@ func parseHostsFromCli(input string) ([]string, error) {
 	return hosts, nil
 }
 
+// Procesar los puertos
 func processRange(ctx context.Context, r string) chan int {
 	c := make(chan int)
 	done := ctx.Done()
@@ -149,6 +155,7 @@ func processRange(ctx context.Context, r string) chan int {
 	return c
 }
 
+// Escanear los puertos del canal processRange
 func scanPorts(ctx context.Context, host string, in <-chan int) chan string {
 	out := make(chan string)
 	done := ctx.Done()
@@ -184,6 +191,7 @@ func scanPorts(ctx context.Context, host string, in <-chan int) chan string {
 	return out
 }
 
+// Escanear una IP y un puerto
 func scanPort(host string, port int) string {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	conn, err := net.DialTimeout("tcp", addr, *timeout)
@@ -196,6 +204,7 @@ func scanPort(host string, port int) string {
 	return fmt.Sprintf("%d \ttcp\topen", port)
 }
 
+// Manejar el escaneo multihilo de cada IP
 func scanHosts(ctx context.Context, hostCli string, hostFile string, portRange string) {
 	var hosts []string
 	var err error
@@ -232,6 +241,7 @@ func scanHosts(ctx context.Context, hostCli string, hostFile string, portRange s
 	}
 }
 
+// Escribir la salida por consola en un archivo
 func writeOutput(results []string) error {
 	if *output == "" {
 		return nil
@@ -251,9 +261,11 @@ func writeOutput(results []string) error {
 	return nil
 }
 
+// Main
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	//wg := &sync.WaitGroup{}
 	startTime := time.Now()
 
 	flag.Parse()
