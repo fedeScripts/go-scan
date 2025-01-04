@@ -1,5 +1,12 @@
 package main
 
+/*
+ Autor: Federico Galarza
+ Descripción: Escaner rapido de puertos TCP, inspirado en el FastTcpScan de @s4vitar.
+ LinkedIn: linkedin.com/in/federico-galarza
+ Version: 1.1
+*/
+
 import (
 	"bufio"
 	"context"
@@ -15,66 +22,24 @@ import (
 )
 
 var (
-	host     = flag.String("ip", "127.0.0.1", "Host o dirección IP a escanear")
-	hostFile = flag.String("iL", "", "Archivo con direcciones IP y/o redes en formato CIDR")
+	hostCli  = flag.String("ip", "127.0.0.1", "Dirección IP o segmento CDIR a escanear separados por coma, ej: 10.1.1.1/24,192.168.0.24")
+	hostFile = flag.String("iL", "", "Archivo con direcciones IP y/o segmentos CDIR. (Uno por línea.)")
 	ports    = flag.String("p", "1-65535", "Rango de puertos a comprobar: 80,443,1-65535,1000-2000, ...")
-	threads  = flag.Int("T", 1000, "Número de hilos a usar")
-	timeout  = flag.Duration("timeout", 1*time.Second, "Segundos por puerto")
+	threads  = flag.Int("T", 500, "Cantidad de hilos a usar")
+	timeout  = flag.Duration("timeout", 1*time.Second, "Segundos de tiem por puerto")
 	output   = flag.String("o", "", "Archivo para guardar el resultado del escaneo")
-
-// verbose  = flag.Bool("v", false, "Mostrar el progreso del escaneo")
 )
 
-func readHostsFromFile(filepath string) ([]string, error) {
-	file, err := os.Open(filepath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var hosts []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			hosts = append(hosts, line)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return hosts, nil
-}
-
-func parseHosts() ([]string, error) {
-	var hosts []string
-
-	if *hostFile != "" {
-		fileHosts, err := readHostsFromFile(*hostFile)
-		if err != nil {
-			return nil, fmt.Errorf("error leyendo archivo de hosts: %v", err)
-		}
-		hosts = append(hosts, fileHosts...)
-	}
-
-	if *host != "" {
-		hosts = append(hosts, strings.Split(*host, ",")...)
-	}
-
-	return hosts, nil
-}
-
 func expandCIDR(cidr string) ([]string, error) {
-	_, ipnet, err := net.ParseCIDR(cidr)
+	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error al analizar el CIDR %s: %v", cidr, err)
 	}
-
 	var ips []string
-	for ip := ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip); incrementIP(ip) {
+	for ip := ipNet.IP.Mask(ipNet.Mask); ipNet.Contains(ip); incrementIP(ip) {
 		ips = append(ips, ip.String())
 	}
+
 	return ips, nil
 }
 
@@ -85,6 +50,63 @@ func incrementIP(ip net.IP) {
 			break
 		}
 	}
+}
+
+func parseHostsFromFile(filepath string) ([]string, error) {
+	file, err := os.Open(filepath)
+	if err != nil {
+		return nil, fmt.Errorf("error al abrir el archivo: %v", err)
+	}
+	defer file.Close()
+
+	var hosts []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "/") {
+			expandedIPs, err := expandCIDR(line)
+			if err != nil {
+				return nil, fmt.Errorf("error al expandir CIDR %s: %v", line, err)
+			}
+			hosts = append(hosts, expandedIPs...)
+		} else {
+			hosts = append(hosts, line)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error al leer el archivo: %v", err)
+	}
+	return hosts, nil
+}
+
+func parseHostsFromCli(input string) ([]string, error) {
+	parts := strings.Split(input, ",")
+	var hosts []string
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "/") {
+			expandedIPs, err := expandCIDR(part)
+
+			if err != nil {
+				return nil, fmt.Errorf("error al expandir CIDR %s: %v", part, err)
+			}
+			hosts = append(hosts, expandedIPs...)
+
+		} else {
+			hosts = append(hosts, part)
+		}
+	}
+	for _, host := range hosts {
+		fmt.Println("parseHostsFromCli", host)
+	}
+	return hosts, nil
 }
 
 func processRange(ctx context.Context, r string) chan int {
@@ -99,7 +121,6 @@ func processRange(ctx context.Context, r string) chan int {
 			rg := strings.Split(block, "-")
 			var minPort, maxPort int
 			var err error
-
 			minPort, err = strconv.Atoi(rg[0])
 			if err != nil {
 				log.Print("No ha sido posible interpretar el rango: ", block)
@@ -128,7 +149,7 @@ func processRange(ctx context.Context, r string) chan int {
 	return c
 }
 
-func scanPorts(ctx context.Context, in <-chan int) chan string {
+func scanPorts(ctx context.Context, host string, in <-chan int) chan string {
 	out := make(chan string)
 	done := ctx.Done()
 	var wg sync.WaitGroup
@@ -143,7 +164,7 @@ func scanPorts(ctx context.Context, in <-chan int) chan string {
 					if !ok {
 						return
 					}
-					s := scanPort(port)
+					s := scanPort(host, port)
 					select {
 					case out <- s:
 					case <-done:
@@ -155,7 +176,6 @@ func scanPorts(ctx context.Context, in <-chan int) chan string {
 			}
 		}()
 	}
-
 	go func() {
 		wg.Wait()
 		close(out)
@@ -164,8 +184,8 @@ func scanPorts(ctx context.Context, in <-chan int) chan string {
 	return out
 }
 
-func scanPort(port int) string {
-	addr := fmt.Sprintf("%s:%d", *host, port)
+func scanPort(host string, port int) string {
+	addr := fmt.Sprintf("%s:%d", host, port)
 	conn, err := net.DialTimeout("tcp", addr, *timeout)
 
 	if err != nil {
@@ -173,7 +193,43 @@ func scanPort(port int) string {
 	}
 
 	conn.Close()
-	return fmt.Sprintf("%d open", port)
+	return fmt.Sprintf("%d \ttcp\topen", port)
+}
+
+func scanHosts(ctx context.Context, hostCli string, hostFile string, portRange string) {
+	var hosts []string
+	var err error
+
+	if hostFile != "" {
+		hosts, err = parseHostsFromFile(hostFile)
+		if err != nil {
+			log.Fatalf("Error al leer hosts desde archivo: %v", err)
+		}
+	} else if hostCli != "" {
+		hosts, err = parseHostsFromCli(hostCli)
+		if err != nil {
+			log.Fatalf("Error al leer hosts desde CLI: %v", err)
+		}
+	} else {
+		log.Fatalf("Debe especificar un archivo de hosts o un input por CLI")
+	}
+
+	for _, host := range hosts {
+		fmt.Printf("\n[+] Escaneando IP: %s \n", host)
+		fmt.Printf("\n\tPuerto\tProto\tEstado\n")
+
+		pR := processRange(ctx, *ports)
+		sP := scanPorts(ctx, host, pR)
+
+		var openPorts int
+		for port := range sP {
+			if strings.HasSuffix(port, "open") {
+				fmt.Printf("\t%s\n", port)
+				openPorts++
+			}
+		}
+		fmt.Printf("\n[i] Se encontraron %d puertos abiertos.\n", openPorts)
+	}
 }
 
 func writeOutput(results []string) error {
@@ -201,32 +257,13 @@ func main() {
 	startTime := time.Now()
 
 	flag.Parse()
-	fmt.Printf("\n[+] Escaneando IP: %s", *host)
-	fmt.Printf("\n[i] Puertos: %s\n\n", *ports)
+	fmt.Printf("\n[i] Iniciando escaneo a las %s\n", startTime.Format("15:04 del 02-01-2006"))
+	fmt.Printf("[i] Puertos a escanear: %s\n", *ports)
 
-	pR := processRange(ctx, *ports)
-	sP := scanPorts(ctx, pR)
+	scanHosts(ctx, *hostCli, *hostFile, *ports)
 
-	var openPorts int
-	for port := range sP {
-		if strings.HasSuffix(port, " open") {
-			fmt.Printf("	tcp/%s\n", port)
-			openPorts++
-		}
-	}
-
-	var results []string
-	for result := range sP {
-		results = append(results, result)
-		fmt.Println(result)
-	}
-
-	if err := writeOutput(results); err != nil {
-		log.Printf("Error escribiendo archivo de salida: %v", err)
-	}
-
+	endTime := time.Now()
 	elapsedTime := time.Since(startTime)
-	fmt.Printf("\n[i] Se encontraron %d puertos abiertos.\n", openPorts)
-	fmt.Printf("\n[i] Tiempo transcurrido: %s\n", elapsedTime)
-	fmt.Println("[+] Escaneo finalizado.\n")
+	fmt.Printf("\n[i] Escaneo finalizado a las %s\n", endTime.Format("15:04 del 02-01-2006"))
+	fmt.Printf("[i] Tiempo transcurrido: %s\n", elapsedTime)
 }
