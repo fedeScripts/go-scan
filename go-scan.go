@@ -3,7 +3,7 @@ package main
 /*
  Autor: Federico Galarza
  Descripción: Escaner rapido de puertos TCP, inspirado en el FastTcpScan de @s4vitar.
- LinkedIn: linkedin.com/in/federico-galarza
+ Repo: https://github.com/fedeScripts
  Version: 1.1
 */
 
