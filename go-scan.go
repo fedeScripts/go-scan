@@ -12,6 +12,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -26,9 +27,9 @@ var (
 	hostCli  = flag.String("ip", "127.0.0.1", "Dirección IP o segmento CDIR a escanear separados por coma, ej: 10.1.1.1/24,192.168.0.24")
 	hostFile = flag.String("iL", "", "Archivo con direcciones IP y/o segmentos CDIR. (Uno por línea.)")
 	ports    = flag.String("p", "1-65535", "Rango de puertos a comprobar: 80,443,1-65535,1000-2000, ...")
-	threads  = flag.Int("T", 500, "Cantidad de hilos a usar")
-	timeout  = flag.Duration("timeout", 1*time.Second, "Segundos de tiem por puerto")
-	output   = flag.String("o", "", "Archivo para guardar el resultado del escaneo")
+	threads  = flag.Int("T", 500, "Cantidad de hilos a usar.")
+	timeout  = flag.Duration("timeout", 1*time.Second, "Segundos de tiem por puerto.")
+	output   = flag.String("o", "", "Archivo para guardar el resultado del escaneo.")
 )
 
 // Pocesar segmentos de red CDIR
@@ -45,7 +46,7 @@ func expandCIDR(cidr string) ([]string, error) {
 	return ips, nil
 }
 
-// Auxiliar para expandCIDR
+// Auxiliar
 func incrementIP(ip net.IP) {
 	for j := len(ip) - 1; j >= 0; j-- {
 		ip[j]++
@@ -224,8 +225,8 @@ func scanHosts(ctx context.Context, hostCli string, hostFile string, portRange s
 	}
 
 	for _, host := range hosts {
-		fmt.Printf("\n[+] Escaneando IP: %s \n", host)
-		fmt.Printf("\n\tPuerto\tProto\tEstado\n")
+		writeOutput("\n[+] Escaneando IP: %s \n", host)
+		writeOutput("\n\tPuerto\tProto\tEstado\n")
 
 		pR := processRange(ctx, *ports)
 		sP := scanPorts(ctx, host, pR)
@@ -233,49 +234,49 @@ func scanHosts(ctx context.Context, hostCli string, hostFile string, portRange s
 		var openPorts int
 		for port := range sP {
 			if strings.HasSuffix(port, "open") {
-				fmt.Printf("\t%s\n", port)
+				writeOutput("\t%s\n", port)
 				openPorts++
 			}
 		}
-		fmt.Printf("\n[i] Se encontraron %d puertos abiertos.\n", openPorts)
+		writeOutput("\n[i] Se encontraron %d puertos abiertos.\n", openPorts)
 	}
 }
 
-// Escribir la salida por consola en un archivo
-func writeOutput(results []string) error {
-	if *output == "" {
-		return nil
-	}
-	file, err := os.Create(*output)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+// Escribir la salida en la consola y en un archivo
+func writeOutput(format string, args ...interface{}) {
+	var outputWriter io.Writer
 
-	for _, line := range results {
-		_, err := file.WriteString(line + "\n")
+	if *output != "" {
+		file, err := os.OpenFile(*output, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
-			return err
+			log.Fatalf("Error al abrir el archivo para escribir los resultados: %v", err)
 		}
+		defer file.Close()
+
+		outputWriter = io.MultiWriter(os.Stdout, file)
+	} else {
+		outputWriter = os.Stdout
 	}
-	return nil
+
+	fmt.Fprintf(outputWriter, format, args...)
 }
 
 // Main
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	//wg := &sync.WaitGroup{}
 	startTime := time.Now()
 
 	flag.Parse()
-	fmt.Printf("\n[i] Iniciando escaneo a las %s\n", startTime.Format("15:04 del 02-01-2006"))
-	fmt.Printf("[i] Puertos a escanear: %s\n", *ports)
+
+	writeOutput("\n[i] Iniciando escaneo a las %s\n", startTime.Format("15:04 del 02-01-2006"))
+	writeOutput("[i] Puertos a escanear: %s\n", *ports)
 
 	scanHosts(ctx, *hostCli, *hostFile, *ports)
 
 	endTime := time.Now()
 	elapsedTime := time.Since(startTime)
-	fmt.Printf("\n[i] Escaneo finalizado a las %s\n", endTime.Format("15:04 del 02-01-2006"))
-	fmt.Printf("[i] Tiempo transcurrido: %s\n", elapsedTime)
+
+	writeOutput("\n[i] Escaneo finalizado a las %s\n", endTime.Format("15:04 del 02-01-2006"))
+	writeOutput("[i] Tiempo transcurrido: %s\n", elapsedTime)
 }
