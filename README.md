@@ -51,7 +51,6 @@ Implementar las siguientes funcionalidades
     - Interpretear nombres de Host.
     - Realizar consultas DNS.
 
-
 ```
 
 ## Autor
