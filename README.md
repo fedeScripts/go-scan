@@ -16,7 +16,7 @@ Escaner rapido de puertos TCP, inspirado en el [FastTcpScan](https://s4vitar.git
   -iL		Archivo con direcciones IP y/o segmentos de red en formato CIDR. (Uno por linea)
   -p		Rango de puertos a comprobar: 80,443,1-65535,1000-2000, ... (default "1-65535")
   -o		Archivo para guardar el resultado del escaneo.
-  -csv        Archivo para guardar el resultado del escaneo en formato CSV.
+  -csv          Archivo para guardar el resultado del escaneo en formato CSV.
   -T		Cantidad de puertos escaneados en simultáneo. (default 1000)
   -timeout	Timeout por puerto (default 1s)
 
