@@ -25,20 +25,21 @@ import (
 
 // Flags
 var (
-	hostCli    = flag.String("ip", "127.0.0.1", "Dirección IP o segmento CDIR a escanear, se admiten múltiples valores separados por coma, ej: 10.1.1.1/24,192.168.0.24")
-	hostFile   = flag.String("iL", "", "Archivo con direcciones IP y/o segmentos CDIR. Uno por línea.")
+	hostCli    = flag.String("ip", "127.0.0.1", "Dirección IP o segmento CIDR a escanear, se admiten múltiples valores separados por coma, ej: 10.1.1.1/24,192.168.0.24")
+	hostFile   = flag.String("iL", "", "Archivo con direcciones IP y/o segmentos de red en formato CIDR. Uno por línea.")
 	ports      = flag.String("p", "1-65535", "Rango de puertos a comprobar, ej: 80,443,1-65535,1000-2000")
-	threads    = flag.Int("T", 500, "Cantidad de puertos escaneados en simultáneo.")
+	threads    = flag.Int("T", 1000, "Cantidad de puertos escaneados en simultáneo. (default 1000)")
 	timeout    = flag.Duration("timeout", 1*time.Second, "Limite de tiempo por puerto, en segundos.")
 	output     = flag.String("o", "", "Archivo para guardar el resultado del escaneo.")
 	csv_output = flag.String("csv", "", "Archivo para guardar el resultado del escaneo en formato CSV.")
 )
 
-// Pocesar segmentos de red CDIR
+// Pocesar segmentos de red CIDR
 func expandCIDR(cidr string) ([]string, error) {
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
-		return nil, fmt.Errorf("error al analizar el CIDR %s: %v", cidr, err)
+		logError("al analizar el segmento CIDR %s: %v", cidr, err)
+		os.Exit(1)
 	}
 	var ips []string
 	for ip := ipNet.IP.Mask(ipNet.Mask); ipNet.Contains(ip); incrementIP(ip) {
@@ -62,7 +63,7 @@ func incrementIP(ip net.IP) {
 func parseHostsFromFile(filepath string) ([]string, error) {
 	file, err := os.Open(filepath)
 	if err != nil {
-		return nil, fmt.Errorf("error al abrir el archivo: %v", err)
+		return nil, logError("al abrir el archivo: %v", err)
 	}
 	defer file.Close()
 
@@ -76,7 +77,7 @@ func parseHostsFromFile(filepath string) ([]string, error) {
 		if strings.Contains(line, "/") {
 			expandedIPs, err := expandCIDR(line)
 			if err != nil {
-				return nil, fmt.Errorf("error al expandir CIDR %s: %v", line, err)
+				return nil, logError("al expandir CIDR %s: %v", line, err)
 			}
 			hosts = append(hosts, expandedIPs...)
 		} else {
@@ -85,7 +86,7 @@ func parseHostsFromFile(filepath string) ([]string, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error al leer el archivo: %v", err)
+		return nil, logError("al leer el archivo: %v", err)
 	}
 	return hosts, nil
 }
@@ -100,14 +101,14 @@ func parseHostsFromCli(input string) ([]string, error) {
 			continue
 		}
 		if strings.Contains(part, "/") {
-			expandedIPs, err := expandCIDR(part)
-
-			if err != nil {
-				return nil, fmt.Errorf("error al expandir CIDR %s: %v", part, err)
-			}
+			expandedIPs, _ := expandCIDR(part)
 			hosts = append(hosts, expandedIPs...)
 
 		} else {
+			ip := net.ParseIP(part)
+			if ip == nil {
+				return nil, logError("la dirección IP '%s' no es válida", part)
+			}
 			hosts = append(hosts, part)
 		}
 	}
@@ -132,7 +133,7 @@ func processRange(ctx context.Context, r string) chan int {
 			var err error
 			minPort, err = strconv.Atoi(rg[0])
 			if err != nil {
-				log.Print("No ha sido posible interpretar el rango: ", block)
+				logError("no ha sido posible interpretar el rango: %v", block)
 				continue
 			}
 
@@ -141,7 +142,7 @@ func processRange(ctx context.Context, r string) chan int {
 			} else {
 				maxPort, err = strconv.Atoi(rg[1])
 				if err != nil {
-					log.Print("No ha sido posible interpretar el rango: ", block)
+					logError("no ha sido posible interpretar el rango: %v", block)
 					continue
 				}
 			}
@@ -211,20 +212,25 @@ func scanPort(host string, port int) string {
 func scanHosts(ctx context.Context, hostCli string, hostFile string, portRange string) {
 	var hosts []string
 	var err error
+	startTime := time.Now()
 
 	if hostFile != "" {
 		hosts, err = parseHostsFromFile(hostFile)
 		if err != nil {
-			log.Fatalf("Error al leer hosts desde archivo: %v", err)
+			os.Exit(1)
 		}
 	} else if hostCli != "" {
 		hosts, err = parseHostsFromCli(hostCli)
 		if err != nil {
-			log.Fatalf("Error al leer hosts desde CLI: %v", err)
+			os.Exit(1)
 		}
 	} else {
-		log.Fatalf("Debe especificar un archivo de hosts o un input por CLI")
+		err = logError("debe especificar una IP o un archivo de IPs a escanear.")
+		os.Exit(1)
 	}
+
+	writeOutput("\n[i] Iniciando escaneo a las %s\n", startTime.Format("15:04 del 02-01-2006"))
+	writeOutput("[i] Puertos a escanear: %s\n", *ports)
 
 	for _, host := range hosts {
 		writeOutput("\n[+] Escaneando IP: %s \n", host)
@@ -243,8 +249,13 @@ func scanHosts(ctx context.Context, hostCli string, hostFile string, portRange s
 				}
 			}
 		}
-		writeOutput("\n[i] Se encontraron %d puertos abiertos.\n", openPorts)
+		writeOutput("\n[+] Se encontraron %d puertos abiertos.\n", openPorts)
 	}
+
+	endTime := time.Now()
+	elapsedTime := time.Since(startTime)
+	writeOutput("\n[i] Escaneo finalizado a las %s\n", endTime.Format("15:04 del 02-01-2006"))
+	writeOutput("[i] Tiempo transcurrido: %s\n", elapsedTime)
 }
 
 // Escribir la salida en la consola y en un archivo
@@ -254,7 +265,7 @@ func writeOutput(format string, args ...interface{}) {
 	if *output != "" {
 		file, err := os.OpenFile(*output, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
-			log.Fatalf("Error al abrir el archivo para escribir los resultados: %v", err)
+			log.Fatalf("[!] Error al abrir el archivo para escribir los resultados: %v", err)
 		}
 		defer file.Close()
 
@@ -274,7 +285,7 @@ func writeCSV(format string, args ...interface{}) {
 
 	file, err := os.OpenFile(*csv_output, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Fatalf("Error al abrir el archivo CSV para escribir los resultados: %v", err)
+		log.Fatalf("[!] Error al abrir el archivo CSV para escribir los resultados: %v", err)
 	}
 	defer file.Close()
 
@@ -294,21 +305,17 @@ func writeCSV(format string, args ...interface{}) {
 	csvWriter.Flush()
 }
 
+// Manejar los mensajes de error
+func logError(format string, args ...interface{}) error {
+	message := fmt.Sprintf("[!] Error "+format, args...)
+	fmt.Fprintln(os.Stderr, message)
+	return fmt.Errorf(message)
+}
+
 // Main
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	startTime := time.Now()
 	flag.Parse()
-
-	writeOutput("\n[i] Iniciando escaneo a las %s\n", startTime.Format("15:04 del 02-01-2006"))
-	writeOutput("[i] Puertos a escanear: %s\n", *ports)
-
 	scanHosts(ctx, *hostCli, *hostFile, *ports)
-
-	endTime := time.Now()
-	elapsedTime := time.Since(startTime)
-
-	writeOutput("\n[i] Escaneo finalizado a las %s\n", endTime.Format("15:04 del 02-01-2006"))
-	writeOutput("[i] Tiempo transcurrido: %s\n", elapsedTime)
 }
