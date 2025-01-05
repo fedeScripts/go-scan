@@ -4,12 +4,13 @@ package main
  Autor: Federico Galarza
  Descripción: Escaner rapido de puertos TCP, inspirado en el FastTcpScan de @s4vitar.
  Repo: https://github.com/fedeScripts/go-scan
- Version: 1.1
+ Version: 1.2
 */
 
 import (
 	"bufio"
 	"context"
+	"encoding/csv"
 	"flag"
 	"fmt"
 	"io"
@@ -24,12 +25,13 @@ import (
 
 // Flags
 var (
-	hostCli  = flag.String("ip", "127.0.0.1", "Dirección IP o segmento CDIR a escanear separados por coma, ej: 10.1.1.1/24,192.168.0.24")
-	hostFile = flag.String("iL", "", "Archivo con direcciones IP y/o segmentos CDIR. (Uno por línea.)")
-	ports    = flag.String("p", "1-65535", "Rango de puertos a comprobar: 80,443,1-65535,1000-2000, ...")
-	threads  = flag.Int("T", 500, "Cantidad de hilos a usar.")
-	timeout  = flag.Duration("timeout", 1*time.Second, "Segundos de tiem por puerto.")
-	output   = flag.String("o", "", "Archivo para guardar el resultado del escaneo.")
+	hostCli    = flag.String("ip", "127.0.0.1", "Dirección IP o segmento CDIR a escanear, se admiten múltiples valores separados por coma, ej: 10.1.1.1/24,192.168.0.24")
+	hostFile   = flag.String("iL", "", "Archivo con direcciones IP y/o segmentos CDIR. Uno por línea.")
+	ports      = flag.String("p", "1-65535", "Rango de puertos a comprobar, ej: 80,443,1-65535,1000-2000")
+	threads    = flag.Int("T", 500, "Cantidad de puertos escaneados en simultáneo.")
+	timeout    = flag.Duration("timeout", 1*time.Second, "Limite de tiempo por puerto, en segundos.")
+	output     = flag.String("o", "", "Archivo para guardar el resultado del escaneo.")
+	csv_output = flag.String("csv", "", "Archivo para guardar el resultado del escaneo en formato CSV.")
 )
 
 // Pocesar segmentos de red CDIR
@@ -236,6 +238,9 @@ func scanHosts(ctx context.Context, hostCli string, hostFile string, portRange s
 			if strings.HasSuffix(port, "open") {
 				writeOutput("\t%s\n", port)
 				openPorts++
+				if *csv_output != "" {
+					writeCSV("%s %s\n", host, port)
+				}
 			}
 		}
 		writeOutput("\n[i] Se encontraron %d puertos abiertos.\n", openPorts)
@@ -261,12 +266,39 @@ func writeOutput(format string, args ...interface{}) {
 	fmt.Fprintf(outputWriter, format, args...)
 }
 
+// Escribir el archivo csv
+func writeCSV(format string, args ...interface{}) {
+	if *csv_output == "" {
+		return
+	}
+
+	file, err := os.OpenFile(*csv_output, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("Error al abrir el archivo CSV para escribir los resultados: %v", err)
+	}
+	defer file.Close()
+
+	csvWriter := csv.NewWriter(file)
+
+	fileInfo, err := file.Stat()
+	if err == nil && fileInfo.Size() == 0 {
+		_ = csvWriter.Write([]string{"IP", "Puerto", "Protocolo", "Estado"})
+	}
+
+	parts := strings.Fields(fmt.Sprintf(format, args...))
+	if len(parts) == 4 {
+		csvRow := []string{parts[0], parts[1], parts[2], parts[3]}
+		_ = csvWriter.Write(csvRow)
+	}
+
+	csvWriter.Flush()
+}
+
 // Main
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	startTime := time.Now()
-
 	flag.Parse()
 
 	writeOutput("\n[i] Iniciando escaneo a las %s\n", startTime.Format("15:04 del 02-01-2006"))
