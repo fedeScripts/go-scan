@@ -49,7 +49,6 @@ Implementar las siguientes funcionalidades
     - Agregar palabras clave para seleccionar los puertos, ej: -p top-1000
     - Agregar rangos fijos a la cantidad de puertos escaneados en simultáneo.
     - Interpretear nombres de Host.
-    - Realizar consultas DNS.
 
 ```
 
