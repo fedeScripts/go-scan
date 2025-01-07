@@ -4,7 +4,7 @@ package main
  Autor: Federico Galarza
  Descripción: Escaner rapido de puertos TCP, inspirado en el FastTcpScan de @s4vitar.
  Repo: https://github.com/fedeScripts/go-scan
- Version: 1.2
+ Version: 1.3
 */
 
 import (
@@ -25,10 +25,11 @@ import (
 
 // Flags
 var (
-	hostCli    = flag.String("ip", "127.0.0.1", "Dirección IP o segmento CIDR a escanear, se admiten múltiples valores separados por coma, ej: 10.1.1.1/24,192.168.0.24")
+	hostCli    = flag.String("i", "127.0.0.1", "Dirección IP o segmento CIDR a escanear, se admiten múltiples valores separados por coma, ej: 10.1.1.1/24,192.168.0.24")
 	hostFile   = flag.String("iL", "", "Archivo con direcciones IP y/o segmentos de red en formato CIDR. Uno por línea.")
-	ports      = flag.String("p", "1-65535", "Rango de puertos a comprobar, ej: 80,443,1-65535,1000-2000")
+	ports      = flag.String("p", "22,135,443,445,2179,8000-8500", "Rango de puertos a comprobar, ej: 80,443,1-65535,1000-2000")
 	threads    = flag.Int("T", 1000, "Cantidad de puertos escaneados en simultáneo. (default 1000)")
+	udpScan    = flag.Bool("udp", false, "Realizar escaneos con el protocolo UDP.")
 	timeout    = flag.Duration("timeout", 1*time.Second, "Limite de tiempo por puerto, en segundos.")
 	output     = flag.String("o", "", "Archivo para guardar el resultado del escaneo.")
 	csv_output = flag.String("csv", "", "Archivo para guardar el resultado del escaneo en formato CSV.")
@@ -105,15 +106,8 @@ func parseHostsFromCli(input string) ([]string, error) {
 			hosts = append(hosts, expandedIPs...)
 
 		} else {
-			ip := net.ParseIP(part)
-			if ip == nil {
-				return nil, logError("la dirección IP '%s' no es válida", part)
-			}
 			hosts = append(hosts, part)
 		}
-	}
-	for _, host := range hosts {
-		fmt.Println("parseHostsFromCli", host)
 	}
 	return hosts, nil
 }
@@ -159,6 +153,27 @@ func processRange(ctx context.Context, r string) chan int {
 	return c
 }
 
+// Resolver nombres de host
+func getAddr(host string) string {
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return host
+	}
+	if len(ips) == 0 {
+		return host
+	}
+	return ips[0].String()
+}
+
+// Obtener el CNAME de una IP
+func getName(ip string) string {
+	cname, err := net.LookupAddr(ip)
+	if err != nil {
+		return ip
+	}
+	return cname[0]
+}
+
 // Escanear los puertos del canal processRange
 func scanPorts(ctx context.Context, host string, in <-chan int) chan string {
 	out := make(chan string)
@@ -175,7 +190,7 @@ func scanPorts(ctx context.Context, host string, in <-chan int) chan string {
 					if !ok {
 						return
 					}
-					s := scanPort(host, port)
+					s := scanTcpPort(host, port)
 					select {
 					case out <- s:
 					case <-done:
@@ -196,31 +211,36 @@ func scanPorts(ctx context.Context, host string, in <-chan int) chan string {
 }
 
 // Escanear una IP y un puerto
-func scanPort(host string, port int) string {
+func scanTcpPort(host string, port int) string {
 	addr := fmt.Sprintf("%s:%d", host, port)
-	conn, err := net.DialTimeout("tcp", addr, *timeout)
 
+	conn, err := net.DialTimeout("tcp", addr, *timeout)
 	if err != nil {
-		return fmt.Sprintf("%d: %s", port, err.Error())
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			// Si hay timeout, el puerto podría estar abierto o filtrado
+			return fmt.Sprintf("%d \ttcp\tabierto o filtrado", port)
+		}
+		// Otros errores indican que el puerto está cerrado o filtrado
+		return fmt.Sprintf("%d \ttcp\tcerrado o filtrado (%s)", port, err.Error())
 	}
 
 	conn.Close()
-	return fmt.Sprintf("%d \ttcp\topen", port)
+	return fmt.Sprintf("%d \ttcp\tabierto", port)
 }
 
 // Manejar el escaneo multihilo de cada IP
 func scanHosts(ctx context.Context, hostCli string, hostFile string, portRange string) {
-	var hosts []string
+	var rawHosts []string
 	var err error
 	startTime := time.Now()
 
 	if hostFile != "" {
-		hosts, err = parseHostsFromFile(hostFile)
+		rawHosts, err = parseHostsFromFile(hostFile)
 		if err != nil {
 			os.Exit(1)
 		}
 	} else if hostCli != "" {
-		hosts, err = parseHostsFromCli(hostCli)
+		rawHosts, err = parseHostsFromCli(hostCli)
 		if err != nil {
 			os.Exit(1)
 		}
@@ -229,11 +249,37 @@ func scanHosts(ctx context.Context, hostCli string, hostFile string, portRange s
 		os.Exit(1)
 	}
 
+	var hosts []string
+	for _, host := range rawHosts {
+		ip := net.ParseIP(host)
+		if ip != nil {
+			hosts = append(hosts, host)
+		} else {
+			resolvedIP := getAddr(host)
+			if resolvedIP == host {
+				writeOutput("[+] '%s' no es una IP o host válido y será ignorado.\n", host)
+			} else {
+				hosts = append(hosts, host)
+			}
+		}
+	}
+
+	if len(hosts) == 0 {
+		logError("debe proporcionar hosts válidos para escanear.")
+		os.Exit(1)
+	}
+
 	writeOutput("\n[i] Iniciando escaneo a las %s\n", startTime.Format("15:04 del 02-01-2006"))
 	writeOutput("[i] Puertos a escanear: %s\n", *ports)
 
+	var ipHost string
 	for _, host := range hosts {
-		writeOutput("\n[+] Escaneando IP: %s \n", host)
+		if net.ParseIP(host) == nil {
+			ipHost = getAddr(host)
+		} else {
+			ipHost = host
+		}
+		writeOutput("\n[+] Reporte para: %s (%v)\n", host, ipHost)
 		writeOutput("\n\tPuerto\tProto\tEstado\n")
 
 		pR := processRange(ctx, *ports)
@@ -241,11 +287,11 @@ func scanHosts(ctx context.Context, hostCli string, hostFile string, portRange s
 
 		var openPorts int
 		for port := range sP {
-			if strings.HasSuffix(port, "open") {
+			if strings.HasSuffix(port, "abierto") {
 				writeOutput("\t%s\n", port)
 				openPorts++
 				if *csv_output != "" {
-					writeCSV("%s %s\n", host, port)
+					writeCSV("%s %s %s\n", ipHost, host, port)
 				}
 			}
 		}
@@ -293,12 +339,12 @@ func writeCSV(format string, args ...interface{}) {
 
 	fileInfo, err := file.Stat()
 	if err == nil && fileInfo.Size() == 0 {
-		_ = csvWriter.Write([]string{"IP", "Puerto", "Protocolo", "Estado"})
+		_ = csvWriter.Write([]string{"IP", "HostName", "Puerto", "Protocolo", "Estado"})
 	}
 
 	parts := strings.Fields(fmt.Sprintf(format, args...))
-	if len(parts) == 4 {
-		csvRow := []string{parts[0], parts[1], parts[2], parts[3]}
+	if len(parts) == 5 {
+		csvRow := []string{parts[0], parts[1], parts[2], parts[3], parts[4]}
 		_ = csvWriter.Write(csvRow)
 	}
 
