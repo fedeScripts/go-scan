@@ -27,7 +27,7 @@ import (
 var (
 	hostCli    = flag.String("i", "127.0.0.1", "Dirección IP o segmento CIDR a escanear, se admiten múltiples valores separados por coma, ej: 10.1.1.1/24,192.168.0.24")
 	hostFile   = flag.String("iL", "", "Archivo con direcciones IP y/o segmentos de red en formato CIDR. Uno por línea.")
-	ports      = flag.String("p", "22,135,443,445,2179,8000-8500", "Rango de puertos a comprobar, ej: 80,443,1-65535,1000-2000")
+	ports      = flag.String("p", "1-65535", "Rango de puertos a comprobar, ej: 80,443,1-65535,1000-2000")
 	threads    = flag.Int("T", 1000, "Cantidad de puertos escaneados en simultáneo. (default 1000)")
 	udpScan    = flag.Bool("udp", false, "Realizar escaneos con el protocolo UDP.")
 	timeout    = flag.Duration("timeout", 1*time.Second, "Limite de tiempo por puerto, en segundos.")
