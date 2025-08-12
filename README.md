@@ -28,10 +28,9 @@ Escaner rapido de puertos TCP, inspirado en el [FastTcpScan](https://s4vitar.git
 
 ```bash
 
-    git pull https://github.com/fedeScripts/go-scan.git
+    git clone https://github.com/fedeScripts/go-scan.git
     cd go-scan
-    go build
-    ./go-scan
+    go build go-scan.go
 
 
 ```
